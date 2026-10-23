@@ -80,3 +80,11 @@ on macOS runners (this host cannot link Apple binaries).
 
 Physical-input measurement (`benchmark --mode physical`) is unavailable: it needs a human
 moving the mouse for the whole trial.
+
+CI (`.github/workflows/ci.yml`) currently passes on `core-linux`, `windows-2022`,
+`macos-15` (arm64) and `macos-15-intel`: format, tests, clippy `-D warnings`, release
+build, CLI preflight and the replay self-check. macOS jobs additionally verify the binary
+architecture and framework linkage; the event tap itself is still never run in CI.
+
+The mapping gate was exercised at the owner's current pointer speed setting (6, the
+Windows default) only; a non-default speed has not been measured.

@@ -1,5 +1,7 @@
 # cursor-smooth
 
+[![ci](https://github.com/merumoa/cursor-smooth/actions/workflows/ci.yml/badge.svg)](https://github.com/merumoa/cursor-smooth/actions/workflows/ci.yml)
+
 Software cursor smoothing for a low-polling-rate mouse on a high-refresh display.
 It does **not** change the mouse radio polling rate, DPI, acceleration or firmware; it
 replaces the visible cursor path with a 1000 Hz output opportunity stream fed by the
