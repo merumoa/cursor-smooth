@@ -21,11 +21,18 @@ jobs:
         run: cargo build --locked --release --bin cursor-smooth
       - name: CLI preflight (no interception)
         run: |
-          ./target/release/cursor-smooth --help
-          ./target/release/cursor-smooth --version
-          ./target/release/cursor-smooth run --hz 500 2>/dev/null; test $? -eq 2
+          ./target/release/cursor-smooth --help > /dev/null
+          ./target/release/cursor-smooth --version > /dev/null
+          set +e
+          ./target/release/cursor-smooth run --hz 500 > /dev/null 2>&1
+          legacy=$?
+          set -e
+          echo "legacy option exit: $legacy"
+          test "$legacy" -eq 2
       - name: Replay self-check
-        run: cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
+        run: |
+          cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
+          exit 0
 
   windows:
     runs-on: windows-2022
@@ -42,13 +49,21 @@ jobs:
       - name: Release build
         run: cargo build --locked --release --bins
       - name: CLI preflight (no interception)
+        shell: pwsh
         run: |
-          ./target/release/cursor-smooth.exe --help
-          ./target/release/cursor-smooth.exe --version
-          ./target/release/cursor-smooth.exe doctor
-          ./target/release/cursor-smooth.exe run --simulate; if ($LASTEXITCODE -ne 2) { exit 1 }
+          ./target/release/cursor-smooth.exe --help | Out-Null
+          ./target/release/cursor-smooth.exe --version | Out-Null
+          ./target/release/cursor-smooth.exe doctor | Out-Null
+          $ErrorActionPreference = 'Continue'
+          ./target/release/cursor-smooth.exe run --simulate 2>$null | Out-Null
+          $legacy = $LASTEXITCODE
+          Write-Host "legacy option exit: $legacy"
+          if ($legacy -ne 2) { exit 1 }
+          exit 0
       - name: Replay self-check
-        run: cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
+        run: |
+          cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
+          exit 0
 
   macos-arm64:
     runs-on: macos-15
@@ -68,16 +83,19 @@ jobs:
           otool -L target/release/cursor-smooth
       - name: CLI preflight (permission denial is a tested path)
         run: |
-          ./target/release/cursor-smooth --help
-          ./target/release/cursor-smooth --version
+          ./target/release/cursor-smooth --help > /dev/null
+          ./target/release/cursor-smooth --version > /dev/null
           set +e
-          ./target/release/cursor-smooth doctor
+          ./target/release/cursor-smooth doctor > /dev/null
           status=$?
           set -e
+          echo "doctor exit: $status"
           # 0 with permissions, 3 without; never a crash or a prompt.
           test "$status" -eq 0 -o "$status" -eq 3
       - name: Replay self-check
-        run: ./target/release/cursor-smooth-probe replay --self-check
+        run: |
+          ./target/release/cursor-smooth-probe replay --self-check
+          exit 0
 
   macos-intel:
     runs-on: macos-15-intel
@@ -95,11 +113,14 @@ jobs:
           otool -L target/release/cursor-smooth
       - name: CLI preflight (permission denial is a tested path)
         run: |
-          ./target/release/cursor-smooth --help
+          ./target/release/cursor-smooth --help > /dev/null
           set +e
-          ./target/release/cursor-smooth doctor
+          ./target/release/cursor-smooth doctor > /dev/null
           status=$?
           set -e
+          echo "doctor exit: $status"
           test "$status" -eq 0 -o "$status" -eq 3
       - name: Replay self-check
-        run: ./target/release/cursor-smooth-probe replay --self-check
+        run: |
+          ./target/release/cursor-smooth-probe replay --self-check
+          exit 0

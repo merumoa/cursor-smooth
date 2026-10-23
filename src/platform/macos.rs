@@ -359,10 +359,10 @@ impl Session {
             if STOP_REQUESTED.load(Ordering::Acquire) || self.shared.stopping() {
                 return;
             }
-            if let Some(deadline) = deadline {
-                if Instant::now() >= deadline {
-                    return;
-                }
+            if let Some(deadline) = deadline
+                && Instant::now() >= deadline
+            {
+                return;
             }
             let timeout = Timespec {
                 seconds: 0,
@@ -435,7 +435,7 @@ impl Session {
 fn tap_thread(shared: Arc<Shared>, native: Arc<Native>, producer: rtrb::Producer<Msg>) {
     let run_loop = unsafe { CFRunLoopGetCurrent() };
     native.run_loop.store(run_loop as usize, Ordering::Release);
-    let nonce = (native.clock.now_ns() as u64) & 0xFFFF;
+    let nonce = native.clock.now_ns() & 0xFFFF;
     let events = vec![
         CGEventType::MouseMoved,
         CGEventType::LeftMouseDown,
@@ -607,7 +607,7 @@ fn emitter_thread(
     unsafe { CGEventSourceSetLocalEventsSuppressionInterval(source.as_ptr() as *mut c_void, 0.0) };
     let grid = grid();
     let mut engine = Engine::new(Point::ZERO);
-    let nonce = (native.clock.now_ns() & 0xFFFF) as u64;
+    let nonce = native.clock.now_ns() & 0xFFFF;
     let mut last_output: Option<(i32, i32)> = None;
     loop {
         if shared.stopping() || STOP_REQUESTED.load(Ordering::Acquire) {
@@ -668,21 +668,16 @@ fn drain(
     mapping: Mapping,
     consumer: &mut rtrb::Consumer<Msg>,
 ) {
-    loop {
-        match consumer.pop() {
-            Ok(message) => {
-                if matches!(message, Msg::Stop) {
-                    shared.request_stop();
-                    break;
-                }
-                metrics.input_events.fetch_add(1, Ordering::AcqRel);
-                if matches!(message, Msg::Native { .. }) {
-                    metrics.native_moves.fetch_add(1, Ordering::AcqRel);
-                }
-                runtime::apply_message(engine, mapping, message);
-            }
-            Err(_) => break,
+    while let Ok(message) = consumer.pop() {
+        if matches!(message, Msg::Stop) {
+            shared.request_stop();
+            break;
         }
+        metrics.input_events.fetch_add(1, Ordering::AcqRel);
+        if matches!(message, Msg::Native { .. }) {
+            metrics.native_moves.fetch_add(1, Ordering::AcqRel);
+        }
+        runtime::apply_message(engine, mapping, message);
     }
     let warmed = engine.is_warmed();
     shared.set_warmed(warmed);
