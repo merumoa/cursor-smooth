@@ -32,14 +32,12 @@ const MAGIC_DIAGNOSTIC: u64 = 0xD4;
 const OUTPUT_INTERVAL_NS: u64 = 1_000_000;
 const HEARTBEAT_LIMIT_NS: u64 = 50_000_000;
 
-#[repr(C, align(8))]
-struct Semaphore([u8; 64]);
+/// libdispatch semaphore handle; the only synchronisation primitive used by
+/// the adapter because Darwin has no POSIX `sem_timedwait`/`sem_init`.
+type DispatchSemaphore = *mut c_void;
 
-#[repr(C)]
-struct Timespec {
-    seconds: i64,
-    nanos: i64,
-}
+const DISPATCH_TIME_NOW: u64 = 0;
+const DISPATCH_TIME_FOREVER: u64 = u64::MAX;
 
 #[repr(C)]
 struct MachTimebaseInfo {
@@ -48,11 +46,10 @@ struct MachTimebaseInfo {
 }
 
 unsafe extern "C" {
-    fn sem_init(sem: *mut Semaphore, pshared: i32, value: u32) -> i32;
-    fn sem_post(sem: *mut Semaphore) -> i32;
-    fn sem_wait(sem: *mut Semaphore) -> i32;
-    fn sem_trywait(sem: *mut Semaphore) -> i32;
-    fn sem_timedwait(sem: *mut Semaphore, timeout: *const Timespec) -> i32;
+    fn dispatch_semaphore_create(value: isize) -> DispatchSemaphore;
+    fn dispatch_semaphore_signal(sem: DispatchSemaphore) -> isize;
+    fn dispatch_semaphore_wait(sem: DispatchSemaphore, timeout: u64) -> isize;
+    fn dispatch_time(when: u64, delta: i64) -> u64;
     fn mach_absolute_time() -> u64;
     fn mach_wait_until(deadline: u64) -> i32;
     fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
@@ -60,23 +57,24 @@ unsafe extern "C" {
     fn CFRunLoopStop(run_loop: *mut c_void);
     fn CGPreflightListenEventAccess() -> bool;
     fn CGPreflightPostEventAccess() -> bool;
-    fn AXIsProcessTrusted() -> bool;
     fn CGEventSourceSetLocalEventsSuppressionInterval(source: *mut c_void, seconds: f64);
     fn signal(sig: i32, handler: usize) -> usize;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXIsProcessTrusted() -> bool;
 }
 
 const SIGINT: i32 = 2;
 const SIGTERM: i32 = 15;
 
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
-static STOP_SEM: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" fn handle_signal(_signal: i32) {
+    // Only an atomic store: the waiter polls this flag, so nothing
+    // signal-unsafe runs inside the handler.
     STOP_REQUESTED.store(true, Ordering::Release);
-    let pointer = STOP_SEM.load(Ordering::Acquire);
-    if pointer != 0 {
-        unsafe { sem_post(pointer as *mut Semaphore) };
-    }
 }
 
 struct Clock {
@@ -180,47 +178,42 @@ pub fn cursor_position() -> Option<Point> {
 }
 
 struct Native {
-    stop_sem: Box<Semaphore>,
-    work_sem: Box<Semaphore>,
+    stop_sem: DispatchSemaphore,
+    work_sem: DispatchSemaphore,
     clock: Clock,
     run_loop: AtomicUsize,
 }
 
+// The semaphore handles are immutable after construction; signaller and waiter
+// may run on different threads.
+unsafe impl Send for Native {}
+unsafe impl Sync for Native {}
+
 impl Native {
     fn new() -> Self {
-        let mut stop = Box::new(Semaphore([0; 64]));
-        let mut work = Box::new(Semaphore([0; 64]));
-        unsafe {
-            sem_init(&mut *stop, 0, 0);
-            sem_init(&mut *work, 0, 0);
-        }
-        let native = Self {
+        let stop = unsafe { dispatch_semaphore_create(0) };
+        let work = unsafe { dispatch_semaphore_create(0) };
+        Self {
             stop_sem: stop,
             work_sem: work,
             clock: Clock::new(),
             run_loop: AtomicUsize::new(0),
-        };
-        STOP_SEM.store(
-            &*native.stop_sem as *const Semaphore as usize,
-            Ordering::Release,
-        );
-        native
-    }
-
-    fn stop_ptr(&self) -> *mut Semaphore {
-        &*self.stop_sem as *const Semaphore as *mut Semaphore
-    }
-
-    fn work_ptr(&self) -> *mut Semaphore {
-        &*self.work_sem as *const Semaphore as *mut Semaphore
+        }
     }
 
     fn post_stop(&self) {
-        unsafe { sem_post(self.stop_ptr()) };
+        unsafe { dispatch_semaphore_signal(self.stop_sem) };
     }
 
     fn post_work(&self) {
-        unsafe { sem_post(self.work_ptr()) };
+        unsafe { dispatch_semaphore_signal(self.work_sem) };
+    }
+
+    /// Bounded wait used by the supervisor loop and the guard; the result is
+    /// ignored because both callers re-read the authoritative atomic state.
+    fn wait_stop_timeout(&self, timeout_ns: u64) {
+        let timeout = unsafe { dispatch_time(DISPATCH_TIME_NOW, timeout_ns as i64) };
+        unsafe { dispatch_semaphore_wait(self.stop_sem, timeout) };
     }
 }
 
@@ -364,11 +357,7 @@ impl Session {
             {
                 return;
             }
-            let timeout = Timespec {
-                seconds: 0,
-                nanos: 20_000_000,
-            };
-            unsafe { sem_timedwait(self.native.stop_ptr(), &timeout) };
+            self.native.wait_stop_timeout(20_000_000);
         }
     }
 
@@ -614,13 +603,13 @@ fn emitter_thread(
             break;
         }
         if !shared.suppressing() {
-            unsafe { sem_wait(native.work_ptr()) };
+            unsafe { dispatch_semaphore_wait(native.work_sem, DISPATCH_TIME_FOREVER) };
             drain(&shared, &metrics, &mut engine, mapping, &mut consumer);
             continue;
         }
         let deadline = native.clock.now_ns() + OUTPUT_INTERVAL_NS;
         unsafe { mach_wait_until(native.clock.ticks(deadline)) };
-        while unsafe { sem_trywait(native.work_ptr()) } == 0 {
+        while unsafe { dispatch_semaphore_wait(native.work_sem, DISPATCH_TIME_NOW) } == 0 {
             drain(&shared, &metrics, &mut engine, mapping, &mut consumer);
         }
         let now = native.clock.now_ns();
@@ -704,11 +693,9 @@ fn guard_thread(shared: Arc<Shared>, native: Arc<Native>) {
             break;
         }
         let suppressing = shared.suppressing();
-        let timeout = Timespec {
-            seconds: 0,
-            nanos: if suppressing { 50_000_000 } else { 500_000_000 },
-        };
-        unsafe { sem_timedwait(native.stop_ptr(), &timeout) };
+        let timeout = if suppressing { 50_000_000 } else { 500_000_000 };
+        let timeout = unsafe { dispatch_time(DISPATCH_TIME_NOW, timeout as i64) };
+        unsafe { dispatch_semaphore_wait(native.work_sem, timeout) };
         if shared.stopping() || STOP_REQUESTED.load(Ordering::Acquire) {
             break;
         }
