@@ -2,3 +2,6 @@
 **/*.rs.bk
 *.pdb
 *.tsv
+
+# tray build outputs (csc writes these, they are not sources)
+tray/bin/

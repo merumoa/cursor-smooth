@@ -42,6 +42,23 @@ cursor-smooth --version
 Step-by-step walkthrough, diagnostics and troubleshooting: [docs/guide.md](docs/guide.md).
 
 - `Ctrl+Alt+M` toggles smoothing, `Ctrl+Alt+Esc` is the emergency off.
+
+### Tray companion (Windows, optional)
+
+```pwsh
+pwsh -File tray\build.ps1                        # builds tray\bin\CursorSmoothTray.exe
+tray\bin\CursorSmoothTray.exe                    # icon in the tray, engine started per settings
+tray\bin\CursorSmoothTray.exe --settings         # open the settings window right away
+pwsh -File tray\build.ps1; powershell -Version 5 -NoProfile -File tray\verify-tray.ps1
+```
+
+The tray is a plain WinForms supervisor, not a second smoother: it starts the engine with
+`run --stop-event <name>`, updates its own status from the engine's exit code, and stops it by
+signalling that named event, so a stop is a graceful CLI shutdown instead of a kill. Settings
+(live in `%APPDATA%\cursor-smooth\tray.json`): engine path, start-with-tray, notifications.
+Nothing is registered for autostart, no service and no installer. A second launch of the
+executable shows the settings window of the running instance.
+
 - Hold any mouse button and motion passes through natively until every button is released,
   so click targets and drag ordering stay native. Drag motion is therefore unsmoothed.
 - Unknown commands and options (including the retired `--hz` and `--simulate`) exit 2

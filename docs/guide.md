@@ -37,6 +37,23 @@ A second instance is refused (session mutex). Ctrl+C stops and restores native i
 `run --duration <seconds>` stops by itself; `run --report out.tsv` writes the measurement
 report after cleanup and refuses to overwrite an existing file.
 
+## 3.1 Tray companion (Windows)
+
+```pwsh
+pwsh -File tray\build.ps1
+tray\bin\CursorSmoothTray.exe --settings
+```
+
+The tray is optional: the CLI works without it. It shows the engine state, starts and stops
+the engine, opens `doctor`, and stores its three settings in
+`%APPDATA%\cursor-smooth\tray.json`. Closing the window hides it; **Выход** in the tray menu
+stops the engine and closes the icon. Stopping is graceful: the tray owns a named kernel event
+and passes `--stop-event <name>` to the engine, so the engine unhooks and restores input before
+exiting (if it ignores the signal for three seconds the tray kills it as a last resort).
+
+A desktop shortcut (`CursorSmooth.lnk`, argument `--settings`) is created by
+`tray\make-shortcut.ps1`; running it a second time only reopens the settings window.
+
 ## 4. What you should observe
 
 - Cursor motion follows the same path the OS produced, delayed by roughly

@@ -11,7 +11,8 @@ cursor-smooth 0.1.0
 Low-CPU software cursor smoothing.
 
 USAGE:
-    cursor-smooth run [--duration <seconds>] [--report <new-file.tsv>] [--experimental-macos]
+    cursor-smooth run [--duration <seconds>] [--report <new-file.tsv>] [--stop-event <name>]
+                      [--experimental-macos]
     cursor-smooth doctor
     cursor-smooth --help | --version
 
@@ -22,6 +23,8 @@ COMMANDS:
 OPTIONS:
     --duration <seconds>  Stop automatically after a positive number of seconds.
     --report <path>       Write a UTF-8 TSV performance report; the file must not exist.
+    --stop-event <name>   Windows-only: stop cleanly when this named event is signalled
+                          (the tray companion uses it instead of killing the process).
     --experimental-macos  Acknowledge the unverified macOS implementation.
 ";
 
@@ -41,6 +44,7 @@ USAGE:
 pub struct RunOptions {
     pub duration: Option<Duration>,
     pub report: Option<PathBuf>,
+    pub stop_event: Option<String>,
     pub experimental_macos: bool,
 }
 
@@ -106,6 +110,7 @@ fn parse_run(args: &[String]) -> Result<RunOptions, ParseError> {
     let mut options = RunOptions {
         duration: None,
         report: None,
+        stop_event: None,
         experimental_macos: false,
     };
     let mut index = 0;
@@ -141,6 +146,19 @@ fn parse_run(args: &[String]) -> Result<RunOptions, ParseError> {
                 options.report = Some(PathBuf::from(value));
                 index += 2;
             }
+            "--stop-event" => {
+                if options.stop_event.is_some() {
+                    return Err(ParseError::Duplicate("--stop-event"));
+                }
+                let value = args
+                    .get(index + 1)
+                    .ok_or(ParseError::MissingValue("--stop-event"))?;
+                if !valid_event_name(value) {
+                    return Err(ParseError::InvalidValue("--stop-event", value.clone()));
+                }
+                options.stop_event = Some(value.clone());
+                index += 2;
+            }
             "--experimental-macos" => {
                 if options.experimental_macos {
                     return Err(ParseError::Duplicate("--experimental-macos"));
@@ -152,6 +170,16 @@ fn parse_run(args: &[String]) -> Result<RunOptions, ParseError> {
         }
     }
     Ok(options)
+}
+
+/// Named kernel events accept a short, path-free identifier; rejecting spaces and
+/// separators keeps the tray hand-off unambiguous and avoids `\` or `:` prefixes.
+fn valid_event_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 120
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 #[cfg(test)]
@@ -171,6 +199,24 @@ mod tests {
     }
 
     #[test]
+    fn stop_event_names_are_strict() {
+        assert!(parse(args(&["run", "--stop-event"])).is_err());
+        assert!(parse(args(&["run", "--stop-event", ""])).is_err());
+        assert!(parse(args(&["run", "--stop-event", "a b"])).is_err());
+        assert!(parse(args(&["run", "--stop-event", "Global\\x"])).is_err());
+        assert_eq!(
+            parse(args(&["run", "--stop-event", "cursor-smooth-tray.stop_1"])),
+            Ok(Command::Run(RunOptions {
+                duration: None,
+                report: None,
+                stop_event: Some("cursor-smooth-tray.stop_1".to_string()),
+                experimental_macos: false,
+            }))
+        );
+        assert!(parse(args(&["run", "--stop-event", "a", "--stop-event", "b"])).is_err());
+    }
+
+    #[test]
     fn duration_must_be_positive_and_present() {
         assert!(parse(args(&["run", "--duration"])).is_err());
         assert!(parse(args(&["run", "--duration", "0"])).is_err());
@@ -180,6 +226,7 @@ mod tests {
             Ok(Command::Run(RunOptions {
                 duration: Some(Duration::from_secs(60)),
                 report: None,
+                stop_event: None,
                 experimental_macos: false,
             }))
         );

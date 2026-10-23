@@ -329,6 +329,7 @@ fn source_probe(args: &[String]) -> i32 {
         scenario: win::Scenario::SourceProbe,
         duration: None,
         report: None,
+        stop_event: None,
         mapping: cursor_smooth::runtime::Mapping::RelativeToCommitted,
     }) {
         Ok(session) => session,
@@ -494,6 +495,7 @@ fn observe_physical(seconds: u64) -> i32 {
         scenario: win::Scenario::Observe,
         duration: None,
         report: None,
+        stop_event: None,
         mapping: cursor_smooth::runtime::Mapping::RelativeToCommitted,
     }) {
         Ok(session) => session,
@@ -613,6 +615,7 @@ fn fault_check(args: &[String]) -> i32 {
             scenario: win::Scenario::FaultCheck,
             duration: None,
             report: None,
+            stop_event: None,
             mapping: cursor_smooth::runtime::Mapping::RelativeToCommitted,
         }) {
             Ok(session) => session,
@@ -827,6 +830,7 @@ fn inject_cost(args: &[String]) -> i32 {
         scenario: win::Scenario::ReplayOutput,
         duration: None,
         report: None,
+        stop_event: None,
         mapping: cursor_smooth::runtime::Mapping::RelativeToCommitted,
     }) {
         Ok(session) => session,
@@ -1061,6 +1065,7 @@ fn benchmark_replay(args: &[String], seconds: u64, trials: u64) -> i32 {
             scenario: win::Scenario::ReplayOutput,
             duration: None,
             report: None,
+            stop_event: None,
             mapping: cursor_smooth::runtime::Mapping::RelativeToCommitted,
         }) {
             Ok(session) => session,

@@ -159,12 +159,14 @@ pub struct SessionConfig {
     pub scenario: Scenario,
     pub duration: Option<Duration>,
     pub report: Option<PathBuf>,
+    pub stop_event: Option<String>,
     pub mapping: Mapping,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
+            stop_event: None,
             scenario: Scenario::Normal,
             duration: None,
             report: None,
@@ -330,6 +332,8 @@ struct Native {
     state_event: usize,
     work: usize,
     timer: usize,
+    /// Named event owned by a supervisor (tray); 0 when the CLI runs alone.
+    external_stop: usize,
 }
 
 impl Native {
@@ -340,7 +344,13 @@ impl Native {
 
 impl Drop for Native {
     fn drop(&mut self) {
-        for raw in [self.stop, self.state_event, self.work, self.timer] {
+        for raw in [
+            self.stop,
+            self.state_event,
+            self.work,
+            self.timer,
+            self.external_stop,
+        ] {
             if raw != 0 {
                 unsafe { CloseHandle(raw as HANDLE) };
             }
@@ -1450,12 +1460,35 @@ impl Session {
             unsafe { CloseHandle(instance) };
             return Err(format!("cannot create native events: {}", last_error()));
         }
+        let external_stop = match &config.stop_event {
+            Some(name) => {
+                let name = wide(name);
+                let handle = unsafe { CreateEventW(null_mut(), 0, 0, name.as_ptr()) };
+                if handle.is_null() {
+                    unsafe {
+                        CloseHandle(instance);
+                        CloseHandle(stop);
+                        CloseHandle(state_event);
+                        CloseHandle(work);
+                        CloseHandle(timer);
+                    }
+                    return Err(format!(
+                        "cannot open stop event {}: {}",
+                        String::from_utf16_lossy(name[..name.len() - 1].as_ref()),
+                        last_error()
+                    ));
+                }
+                handle as usize
+            }
+            None => 0,
+        };
         let native = Arc::new(Native {
             _instance: instance as usize,
             stop: stop as usize,
             state_event: state_event as usize,
             work: work as usize,
             timer: timer as usize,
+            external_stop,
         });
 
         let shared = Arc::new(Shared::new());
@@ -1598,9 +1631,17 @@ impl Session {
         self.shared.state() == target
     }
 
-    /// Blocks until the duration elapses, Ctrl+C, or an internal stop.
+    /// Blocks until the duration elapses, Ctrl+C, an internal stop, or a
+    /// supervisor signal on the named stop event.
     pub fn wait(&self, duration: Option<Duration>) {
         let deadline = duration.map(|value| Instant::now() + value);
+        // Fixed-size array: the wait loop must not allocate per iteration.
+        let mut handles = [self.native.handle(self.native.stop); 2];
+        let mut count = 1u32;
+        if self.native.external_stop != 0 {
+            handles[1] = self.native.handle(self.native.external_stop);
+            count = 2;
+        }
         loop {
             if self.shared.stopping() || CONSOLE_STOPPED.load(Ordering::Acquire) {
                 return;
@@ -1614,11 +1655,11 @@ impl Session {
                 .map(|value| value.saturating_duration_since(Instant::now()))
                 .unwrap_or(Duration::from_millis(100))
                 .min(Duration::from_millis(100));
-            unsafe {
-                WaitForSingleObject(
-                    self.native.handle(self.native.stop),
-                    remaining.as_millis() as u32,
-                );
+            let result = unsafe {
+                WaitForMultipleObjects(count, handles.as_ptr(), 0, remaining.as_millis() as u32)
+            };
+            if count == 2 && result == WAIT_OBJECT_0 + 1 {
+                return;
             }
         }
     }
@@ -1972,6 +2013,7 @@ pub fn run(options: &RunOptions) -> i32 {
         scenario: Scenario::Normal,
         duration: options.duration,
         report: options.report.clone(),
+        stop_event: options.stop_event.clone(),
         mapping: Mapping::RelativeToCommitted,
     };
     let session = match Session::start(config) {

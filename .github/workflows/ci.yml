@@ -64,6 +64,13 @@ jobs:
         run: |
           cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
           exit 0
+      - name: Tray build and selftest
+        shell: pwsh
+        run: |
+          ./tray/build.ps1
+          ./tray/bin/CursorSmoothTray.exe --selftest | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          exit 0
 
   macos-arm64:
     runs-on: macos-15
