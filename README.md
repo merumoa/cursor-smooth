@@ -39,6 +39,8 @@ cursor-smooth --help
 cursor-smooth --version
 ```
 
+Step-by-step walkthrough, diagnostics and troubleshooting: [docs/guide.md](docs/guide.md).
+
 - `Ctrl+Alt+M` toggles smoothing, `Ctrl+Alt+Esc` is the emergency off.
 - Hold any mouse button and motion passes through natively until every button is released,
   so click targets and drag ordering stay native. Drag motion is therefore unsmoothed.
