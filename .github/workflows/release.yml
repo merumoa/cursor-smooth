@@ -1,0 +1,106 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      - name: Tests and release build
+        run: |
+          cargo test --locked --all-targets
+          cargo build --locked --release --bins
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/cursor-smooth.exe dist/
+          Copy-Item LICENSE dist/
+          Copy-Item README.md dist/
+          Copy-Item docs/measurements.md dist/ -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/* -DestinationPath cursor-smooth-0.1.0-windows-x64.zip
+          (Get-FileHash cursor-smooth-0.1.0-windows-x64.zip -Algorithm SHA256).Hash.ToLower() + "  cursor-smooth-0.1.0-windows-x64.zip" | Set-Content cursor-smooth-0.1.0-windows-x64.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            cursor-smooth-0.1.0-windows-x64.zip
+            cursor-smooth-0.1.0-windows-x64.zip.sha256
+
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      - name: Tests and release build
+        run: |
+          cargo test --locked --all-targets
+          cargo build --locked --release --bins
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/cursor-smooth dist/
+          cp target/release/cursor-smooth-probe dist/
+          cp LICENSE README.md dist/
+          [ -f docs/measurements.md ] && cp docs/measurements.md dist/ || true
+          tar -czf cursor-smooth-0.1.0-experimental-macos-arm64.tar.gz -C dist .
+          shasum -a 256 cursor-smooth-0.1.0-experimental-macos-arm64.tar.gz > cursor-smooth-0.1.0-experimental-macos-arm64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: |
+            cursor-smooth-0.1.0-experimental-macos-arm64.tar.gz
+            cursor-smooth-0.1.0-experimental-macos-arm64.tar.gz.sha256
+
+  macos-intel:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show
+      - name: Tests and release build
+        run: |
+          cargo test --locked --all-targets
+          cargo build --locked --release --bins
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/cursor-smooth dist/
+          cp target/release/cursor-smooth-probe dist/
+          cp LICENSE README.md dist/
+          [ -f docs/measurements.md ] && cp docs/measurements.md dist/ || true
+          tar -czf cursor-smooth-0.1.0-experimental-macos-x86_64.tar.gz -C dist .
+          shasum -a 256 cursor-smooth-0.1.0-experimental-macos-x86_64.tar.gz > cursor-smooth-0.1.0-experimental-macos-x86_64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-intel
+          path: |
+            cursor-smooth-0.1.0-experimental-macos-x86_64.tar.gz
+            cursor-smooth-0.1.0-experimental-macos-x86_64.tar.gz.sha256
+
+  publish:
+    needs: [windows, macos-arm64, macos-intel]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect assets
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          ls -l release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: docs/release-notes.md

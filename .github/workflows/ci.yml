@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show && cargo --version
+      - name: Format
+        run: cargo fmt --check
+      - name: Tests
+        run: cargo test --locked --all-targets
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Release build
+        run: cargo build --locked --release --bin cursor-smooth
+      - name: CLI preflight (no interception)
+        run: |
+          ./target/release/cursor-smooth --help
+          ./target/release/cursor-smooth --version
+          ./target/release/cursor-smooth run --hz 500 2>/dev/null; test $? -eq 2
+      - name: Replay self-check
+        run: cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show && cargo --version
+      - name: Format
+        run: cargo fmt --check
+      - name: Tests
+        run: cargo test --locked --all-targets
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Release build
+        run: cargo build --locked --release --bins
+      - name: CLI preflight (no interception)
+        run: |
+          ./target/release/cursor-smooth.exe --help
+          ./target/release/cursor-smooth.exe --version
+          ./target/release/cursor-smooth.exe doctor
+          ./target/release/cursor-smooth.exe run --simulate; if ($LASTEXITCODE -ne 2) { exit 1 }
+      - name: Replay self-check
+        run: cargo run --locked --release --bin cursor-smooth-probe -- replay --self-check
+
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show && cargo --version
+      - name: Tests
+        run: cargo test --locked --all-targets
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Release build
+        run: cargo build --locked --release --bins
+      - name: Linkage
+        run: |
+          file target/release/cursor-smooth
+          otool -L target/release/cursor-smooth
+      - name: CLI preflight (permission denial is a tested path)
+        run: |
+          ./target/release/cursor-smooth --help
+          ./target/release/cursor-smooth --version
+          set +e
+          ./target/release/cursor-smooth doctor
+          status=$?
+          set -e
+          # 0 with permissions, 3 without; never a crash or a prompt.
+          test "$status" -eq 0 -o "$status" -eq 3
+      - name: Replay self-check
+        run: ./target/release/cursor-smooth-probe replay --self-check
+
+  macos-intel:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show && cargo --version
+      - name: Tests
+        run: cargo test --locked --all-targets
+      - name: Release build
+        run: cargo build --locked --release --bins
+      - name: Linkage
+        run: |
+          file target/release/cursor-smooth
+          otool -L target/release/cursor-smooth
+      - name: CLI preflight (permission denial is a tested path)
+        run: |
+          ./target/release/cursor-smooth --help
+          set +e
+          ./target/release/cursor-smooth doctor
+          status=$?
+          set -e
+          test "$status" -eq 0 -o "$status" -eq 3
+      - name: Replay self-check
+        run: ./target/release/cursor-smooth-probe replay --self-check
